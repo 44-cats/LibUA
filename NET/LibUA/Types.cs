@@ -6879,6 +6879,7 @@ namespace LibUA
 
             public TLConnection TL { get; set; }
             public IPEndPoint Endpoint { get; set; }
+            public string Path { get; set; }
 
             public SLSequence LocalSequence { get; set; }
             public SLSequence RemoteSequence { get; set; }

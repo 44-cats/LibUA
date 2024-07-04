@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -24,6 +25,7 @@ namespace LibUA
 
         public readonly string Target;
         public readonly int Port;
+        public readonly string Path;
         public readonly int Timeout;
 
         protected SLChannel config = null;
@@ -78,10 +80,11 @@ namespace LibUA
             get { return tcp != null && tcp.Connected; }
         }
 
-        public Client(string Target, int Port, int Timeout, int MaximumMessageSize = 1 << 18)
+        public Client(string Target, int Port, string Path, int Timeout, int MaximumMessageSize = 1 << 18)
         {
             this.Target = Target;
             this.Port = Port;
+            this.Path = Path;
             this.Timeout = Timeout;
             this.MaximumMessageSize = MaximumMessageSize;
         }
@@ -493,7 +496,7 @@ namespace LibUA
                 succeeded &= sendBuf.Encode(new NodeId(RequestCode.GetEndpointsRequest));
                 succeeded &= sendBuf.Encode(reqHeader);
 
-                succeeded &= sendBuf.EncodeUAString(string.Format("opc.tcp://{0}:{1}", config.Endpoint.Address.ToString(), config.Endpoint.Port.ToString()));
+                succeeded &= sendBuf.EncodeUAString(string.Format("opc.tcp://{0}:{1}{2}", config.Endpoint.Address.ToString(), config.Endpoint.Port.ToString(), config.Path));
                 // LocaleIds
                 succeeded &= sendBuf.EncodeUAString(localeIDs);
                 // ProfileUris
@@ -592,7 +595,7 @@ namespace LibUA
                 succeeded &= sendBuf.Encode(new NodeId(RequestCode.FindServersRequest));
                 succeeded &= sendBuf.Encode(reqHeader);
 
-                succeeded &= sendBuf.EncodeUAString(string.Format("opc.tcp://{0}:{1}", config.Endpoint.Address.ToString(), config.Endpoint.Port.ToString()));
+                succeeded &= sendBuf.EncodeUAString(string.Format("opc.tcp://{0}:{1}{2}", config.Endpoint.Address.ToString(), config.Endpoint.Port.ToString(), config.Path));
                 // LocaleIds
                 succeeded &= sendBuf.EncodeUAString(localeIDs);
                 // ProfileIds
@@ -788,7 +791,8 @@ namespace LibUA
                 config = new SLChannel
                 {
                     Endpoint = tcp.Client.RemoteEndPoint as IPEndPoint,
-                    SLState = ConnectionState.Opening
+                    SLState = ConnectionState.Opening,
+                    Path = Path
                 };
 
                 recvQueue = new Dictionary<Tuple<uint, uint>, RecvHandler>();
@@ -839,9 +843,9 @@ namespace LibUA
             succeeded &= sendBuf.Encode(config.TL.LocalConfig.SendBufferSize);
             succeeded &= sendBuf.Encode(config.TL.LocalConfig.MaxMessageSize);
             succeeded &= sendBuf.Encode(config.TL.LocalConfig.MaxChunkCount);
-            succeeded &= sendBuf.EncodeUAString(string.Format("opc.tcp://{0}:{1}", config.Endpoint.Address.ToString(), config.Endpoint.Port.ToString()));
+            succeeded &= sendBuf.EncodeUAString(string.Format("opc.tcp://{0}:{1}{2}", config.Endpoint.Address.ToString(), config.Endpoint.Port.ToString(), config.Path));
 
-            if (!succeeded)
+            if(!succeeded)
             {
                 return StatusCode.BadEncodingLimitsExceeded;
             }
@@ -1579,56 +1583,53 @@ namespace LibUA
 
                     succeeded &= sendBuf.EncodeUAString(((identityToken as UserIdentityUsernameToken)).PolicyId);
                     succeeded &= sendBuf.EncodeUAString(((identityToken as UserIdentityUsernameToken)).Username);
+                    if(config.SecurityPolicy == SecurityPolicy.None) {
+                        succeeded &= sendBuf.EncodeUAByteString((identityToken as UserIdentityUsernameToken).PasswordHash);
+                        succeeded &= sendBuf.EncodeUAByteString(null);
+                    } else {
 
-                    try
-                    {
-                        var passwordSrc = (identityToken as UserIdentityUsernameToken).PasswordHash;
-                        int padSize = UASecurity.CalculatePaddingSize(config.RemoteCertificate,
-                            userIdentitySecurityPolicy ?? config.SecurityPolicy, 4 + passwordSrc.Length,
-                            (config.RemoteNonce == null ? 0 : config.RemoteNonce.Length));
-                        var rndBytes = UASecurity.GenerateRandomBytes(padSize);
+                        try {
+                            var passwordSrc = (identityToken as UserIdentityUsernameToken).PasswordHash;
+                            int padSize = UASecurity.CalculatePaddingSize(config.RemoteCertificate,
+                                userIdentitySecurityPolicy ?? config.SecurityPolicy, 4 + passwordSrc.Length,
+                                (config.RemoteNonce == null ? 0 : config.RemoteNonce.Length));
+                            var rndBytes = UASecurity.GenerateRandomBytes(padSize);
 
-                        byte[] crypted = new byte[4 + passwordSrc.Length + padSize +
-                            (config.RemoteNonce == null ? 0 : config.RemoteNonce.Length)];
+                            byte[] crypted = new byte[4 + passwordSrc.Length + padSize +
+                                (config.RemoteNonce == null ? 0 : config.RemoteNonce.Length)];
 
-                        int rawSize = passwordSrc.Length +
-                            (config.RemoteNonce == null ? 0 : config.RemoteNonce.Length);
+                            int rawSize = passwordSrc.Length +
+                                (config.RemoteNonce == null ? 0 : config.RemoteNonce.Length);
 
-                        crypted[0] = (byte)(rawSize & 0xFF);
-                        crypted[1] = (byte)((rawSize >> 8) & 0xFF);
-                        crypted[2] = (byte)((rawSize >> 16) & 0xFF);
-                        crypted[3] = (byte)((rawSize >> 24) & 0xFF);
+                            crypted[0] = (byte)(rawSize & 0xFF);
+                            crypted[1] = (byte)((rawSize >> 8) & 0xFF);
+                            crypted[2] = (byte)((rawSize >> 16) & 0xFF);
+                            crypted[3] = (byte)((rawSize >> 24) & 0xFF);
 
-                        Array.Copy(passwordSrc, 0, crypted, 4, passwordSrc.Length);
+                            Array.Copy(passwordSrc, 0, crypted, 4, passwordSrc.Length);
 
-                        int offset = 4 + passwordSrc.Length;
+                            int offset = 4 + passwordSrc.Length;
 
-                        if (config.RemoteNonce != null)
-                        {
-                            Array.Copy(config.RemoteNonce, 0, crypted, offset, config.RemoteNonce.Length);
-                            offset += config.RemoteNonce.Length;
+                            if(config.RemoteNonce != null) {
+                                Array.Copy(config.RemoteNonce, 0, crypted, offset, config.RemoteNonce.Length);
+                                offset += config.RemoteNonce.Length;
+                            } else {
+                                Array.Copy(rndBytes, 0, crypted, offset, rndBytes.Length);
+                                offset += rndBytes.Length;
+                            }
+
+                            if(userIdentitySecurityPolicy != null) {
+                                crypted = UASecurity.Encrypt(
+                                    new ArraySegment<byte>(crypted),
+                                    config.RemoteCertificate, UASecurity.UseOaepForSecurityPolicy((SecurityPolicy)userIdentitySecurityPolicy));
+                            }
+
+                            succeeded &= sendBuf.EncodeUAByteString(crypted);
+                            succeeded &= sendBuf.EncodeUAString(((identityToken as UserIdentityUsernameToken)).Algorithm);
+                        } catch {
+                            return StatusCode.BadIdentityTokenInvalid;
                         }
-                        else
-                        {
-                            Array.Copy(rndBytes, 0, crypted, offset, rndBytes.Length);
-                            offset += rndBytes.Length;
-                        }
-
-                        if (userIdentitySecurityPolicy != null)
-                        {
-                            crypted = UASecurity.Encrypt(
-                                new ArraySegment<byte>(crypted),
-                                config.RemoteCertificate, UASecurity.UseOaepForSecurityPolicy((SecurityPolicy)userIdentitySecurityPolicy));
-                        }
-
-                        succeeded &= sendBuf.EncodeUAByteString(crypted);
-                        succeeded &= sendBuf.EncodeUAString(((identityToken as UserIdentityUsernameToken)).Algorithm);
                     }
-                    catch
-                    {
-                        return StatusCode.BadIdentityTokenInvalid;
-                    }
-
                     succeeded &= sendBuf.Encode((UInt32)(sendBuf.Position - eoStartPos - 4), eoStartPos);
                 }
                 else
@@ -1744,7 +1745,7 @@ namespace LibUA
                 succeeded &= sendBuf.Encode(appDesc);
                 // ServerUri
                 succeeded &= sendBuf.EncodeUAString((string)null);
-                succeeded &= sendBuf.EncodeUAString(string.Format("opc.tcp://{0}:{1}", config.Endpoint.Address.ToString(), config.Endpoint.Port.ToString()));
+                succeeded &= sendBuf.EncodeUAString(string.Format("opc.tcp://{0}:{1}{2}", config.Endpoint.Address.ToString(), config.Endpoint.Port.ToString(), config.Path));
                 succeeded &= sendBuf.EncodeUAString(sessionName);
                 succeeded &= sendBuf.EncodeUAByteString(config.LocalNonce);
                 if (ApplicationCertificate == null)
