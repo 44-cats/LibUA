@@ -55,6 +55,7 @@
     <Compile Include="MemoryBuffer.cs" />
     <Compile Include="MemoryBufferExtensions.cs" />
     <Compile Include="NetDispatcher.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Security.Cryptography\AesCng.cs" />
     <Compile Include="Security.Cryptography\AuthenticatedAes.cs" />
     <Compile Include="Security.Cryptography\AuthenticatedAesCng.cs" />
@@ -108,6 +109,9 @@
     <Compile Include="Security.cs" />
     <Compile Include="Server.cs" />
     <Compile Include="Types.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="LibUA.nuspec" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
